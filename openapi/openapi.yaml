@@ -1,14 +1,33 @@
 openapi: 3.0.3
 info:
   title: Smart Inventory API
-  version: 1.0.0
+  version: 1.1.0
   description: |
-    Contrato v1 (el contrato precede a la implementacion; ver OpenApiContractTest).
-    Errores: application/problem+json con code, detail, requestId y errors[].
-    Rate limit: por cliente autenticado; cabeceras X-RateLimit-Limit/Remaining; 429 incluye Retry-After.
-    Cambios incompatibles => /api/v2 con migracion; nunca se modifica v1 en silencio.
+    Contrato v1 (el contrato precede a la implementacion; ver OpenApiContractTest y ApiConformanceTest).
+    Eventos asincronos: contracts/asyncapi.yaml.
+
+    **Errores:** application/problem+json con code, detail, requestId y errors[] (campo/mensaje). El `code` es estable
+    y es lo que el integrador debe usar para decidir: 4xx => corregir la peticion (no reintentar igual);
+    429/503 => reintentar tras Retry-After con backoff exponencial y jitter.
+
+    **Rate limit:** clave de conteo = cliente autenticado (no IP). Estrategia por defecto token bucket: rafaga de 20 y
+    10 req/s sostenidas por cliente (alternativa configurable: ventana fija de 20 req/s, ver ADR-0003). Cabeceras
+    X-RateLimit-Limit y X-RateLimit-Remaining en cada respuesta; 429 incluye Retry-After en segundos. Las peticiones
+    sin credenciales se rechazan con 401 antes de consumir cuota.
+
+    **Correlacion:** X-Request-Id (opcional, 8-64 caracteres [A-Za-z0-9._-]) se devuelve en la respuesta y viaja como
+    correlationId en los eventos. Si falta o no es seguro, el servidor genera un UUID.
+
+    **Versionado:** cambios aditivos suben la version menor del documento (1.0.0 -> 1.1.0). Cambios incompatibles =>
+    /api/v2 con periodo de convivencia y migracion; nunca se modifica v1 en silencio.
+    1.1.0 (compatible): 405/415 documentados, code MISSING_HEADER, X-Request-Id, detalle del rate limit.
 servers:
   - url: http://localhost:8080
+    description: docker compose local
+  - url: https://{stagingHost}
+    description: Staging (la URL real se guarda en el secreto STAGING_URL del entorno de GitHub)
+    variables:
+      stagingHost: { default: smart-inventory-staging.onrender.com }
 security:
   - ApiKey: []
 paths:
@@ -19,6 +38,7 @@ paths:
       description: Distingue fisico, reservado y disponible. Sin resultados => 200 con items vacio.
       x-required-scope: inventory:read
       parameters:
+        - $ref: '#/components/parameters/RequestId'
         - { name: sku, in: query, schema: { type: string, pattern: '^[A-Za-z0-9_-]{1,64}$' } }
         - { name: location, in: query, schema: { type: string, pattern: '^[A-Za-z0-9_-]{1,64}$' } }
         - { name: lot, in: query, schema: { type: string, pattern: '^[A-Za-z0-9_-]{1,64}$' } }
@@ -54,6 +74,7 @@ paths:
         mismo cuerpo devuelve la reserva original (200, Idempotent-Replay: true). La misma clave con otro cuerpo => 422.
       x-required-scope: inventory:reserve
       parameters:
+        - $ref: '#/components/parameters/RequestId'
         - name: Idempotency-Key
           in: header
           required: true
@@ -82,17 +103,20 @@ paths:
         '422':
           description: Validacion de negocio/cuerpo (VALIDATION_FAILED) o clave de idempotencia reutilizada (IDEMPOTENCY_KEY_REUSED)
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/Unavailable' }
   /api/v1/replenishment/suggestions:
     get:
       operationId: listSuggestions
       summary: Sugerencias de reposicion (US-03). No muta stock.
+      description: Filtra por estado, SKU y proveedor. Operacion segura (GET) que nunca modifica stock ni sugerencias. Orden por fecha de creacion descendente.
       x-required-scope: replenishment:read
       parameters:
+        - $ref: '#/components/parameters/RequestId'
         - { name: status, in: query, schema: { type: string, enum: [OPEN, APPROVED] } }
-        - { name: sku, in: query, schema: { type: string } }
-        - { name: supplier, in: query, schema: { type: string } }
+        - { name: sku, in: query, schema: { type: string, pattern: '^[A-Za-z0-9_-]{1,64}$' } }
+        - { name: supplier, in: query, schema: { type: string, pattern: '^[A-Za-z0-9_-]{1,64}$' } }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
       responses:
         '200':
@@ -108,8 +132,10 @@ paths:
     post:
       operationId: approveSuggestion
       summary: Aprobar sugerencia (OPEN -> APPROVED)
+      description: Transicion atomica (UPDATE condicional). Solo OPEN puede aprobarse; repetir responde 409 INVALID_TRANSITION. Publica replenishment.suggestion-approved via outbox.
       x-required-scope: replenishment:approve
       parameters:
+        - $ref: '#/components/parameters/RequestId'
         - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
       responses:
         '200':
@@ -127,7 +153,10 @@ paths:
     get:
       operationId: dashboardInventory
       summary: Vista del dashboard con antiguedad del dato (US-04)
+      description: Proyeccion mantenida por DashboardConsumer. lastUpdatedAt indica cuando se proceso el ultimo evento, processingDelayMs el retraso evento->proyeccion y stale=true si no se actualiza hace mas de 60 s.
       x-required-scope: inventory:read
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
       responses:
         '200':
           description: Filas con lastUpdatedAt, processingDelayMs y stale
@@ -137,10 +166,24 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
 components:
   securitySchemes:
-    ApiKey: { type: apiKey, in: header, name: X-Api-Key }
+    ApiKey:
+      type: apiKey
+      in: header
+      name: X-Api-Key
+      description: |
+        Clave por cliente con scopes: ops-console (inventory:read, replenishment:read, replenishment:approve),
+        fulfillment (inventory:read, inventory:reserve), purchasing (replenishment:read, replenishment:approve).
+        En staging las claves vienen del gestor de secretos; nunca se versionan.
+  parameters:
+    RequestId:
+      name: X-Request-Id
+      in: header
+      required: false
+      description: Identificador de correlacion propuesto por el cliente; se devuelve en la respuesta.
+      schema: { type: string, pattern: '^[A-Za-z0-9._-]{8,64}$' }
   responses:
     BadRequest:
-      description: Parametro o cabecera invalidos / cuerpo ilegible (INVALID_PARAMETER, MALFORMED_REQUEST). Corregir y reenviar.
+      description: Parametro o cabecera invalidos / cuerpo ilegible (INVALID_PARAMETER, MISSING_HEADER, MALFORMED_REQUEST). Corregir y reenviar.
       content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
     Unauthorized:
       description: Falta X-Api-Key o es invalida (UNAUTHENTICATED)
@@ -151,10 +194,19 @@ components:
     NotFound:
       description: Recurso inexistente (NOT_FOUND)
       content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+    UnsupportedMediaType:
+      description: Content-Type distinto de application/json (UNSUPPORTED_MEDIA_TYPE)
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
     TooManyRequests:
       description: Limite de tasa excedido (RATE_LIMITED). Esperar Retry-After segundos.
-      headers: { Retry-After: { schema: { type: integer } } }
-      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+      headers:
+        Retry-After: { schema: { type: integer }, description: Segundos hasta que el cliente vuelve a tener cuota }
+        X-RateLimit-Limit: { schema: { type: integer } }
+        X-RateLimit-Remaining: { schema: { type: integer } }
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          example: { type: 'https://smartinventory.usfq.edu.ec/problems/rate-limited', title: Too Many Requests, status: 429, code: RATE_LIMITED, detail: 'Too many requests; retry after 1s', requestId: 86342576-460e-4d00-a8f3-11190ad07b0e }
     Unavailable:
       description: Dependencia caida (DEPENDENCY_UNAVAILABLE). Reintentar con backoff exponencial y jitter.
       headers: { Retry-After: { schema: { type: integer } } }
@@ -167,7 +219,13 @@ components:
         type: { type: string }
         title: { type: string }
         status: { type: integer }
-        code: { type: string, example: INSUFFICIENT_STOCK }
+        code:
+          type: string
+          example: INSUFFICIENT_STOCK
+          description: |
+            UNAUTHENTICATED, FORBIDDEN, INVALID_PARAMETER, MISSING_HEADER, MALFORMED_REQUEST, VALIDATION_FAILED,
+            IDEMPOTENCY_KEY_REUSED, NOT_FOUND, INSUFFICIENT_STOCK, INVALID_TRANSITION, METHOD_NOT_ALLOWED,
+            UNSUPPORTED_MEDIA_TYPE, RATE_LIMITED, DEPENDENCY_UNAVAILABLE, INTERNAL_ERROR
         detail: { type: string }
         requestId: { type: string }
         errors:
