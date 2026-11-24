@@ -66,6 +66,8 @@ app:
   outbox:
     enabled: true
     poll-ms: 500
+    batch-size: 200            # eventos por confirmacion del broker
+    max-batches-per-poll: 10   # drena hasta 2000 eventos por ciclo si hay atraso
   dashboard:
     stale-seconds: 60
   security:
