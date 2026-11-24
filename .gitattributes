@@ -1,0 +1,12 @@
+# Normaliza finales de linea: en Windows (core.autocrlf=true) los scripts quedaban con CRLF
+# y bash fallaba con "set: pipefail: invalid option name". Todo lo que corre en Linux va en LF.
+* text=auto
+*.sh   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.js   text eol=lf
+*.sql  text eol=lf
+Dockerfile text eol=lf
+*.png binary
+*.jar binary
