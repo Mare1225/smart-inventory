@@ -29,6 +29,7 @@ services:
       DB_USER: inventory
       DB_PASSWORD: ${DB_PASSWORD:-inventory}
       RABBIT_HOST: rabbitmq
+      OTLP_ENDPOINT: http://jaeger:4318/v1/traces
       RATE_LIMIT_STRATEGY: ${RATE_LIMIT_STRATEGY:-token-bucket}
       # Solo para la prueba de carga (perf/README.md) se elevan; por defecto = application.yml
       APP_RATELIMIT_CAPACITY: ${RATE_LIMIT_CAPACITY:-20}
@@ -43,7 +44,18 @@ services:
       - ./ops/alerts.yml:/etc/prometheus/alerts.yml:ro
     ports: ["9090:9090"]
 
+  jaeger:                               # trazas OTLP: API -> JDBC -> outbox -> RabbitMQ -> consumidores
+    image: jaegertracing/all-in-one:1.62.0
+    ports: ["16686:16686", "4318:4318"]
+
   grafana:
     image: grafana/grafana:11.2.0
     ports: ["3000:3000"]
-    depends_on: [prometheus]
+    depends_on: [prometheus, jaeger]
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"       # solo laboratorio local: panel visible sin login
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/smart-inventory.json
+    volumes:
+      - ./ops/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./ops/grafana/dashboards:/var/lib/grafana/dashboards:ro
