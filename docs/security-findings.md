@@ -11,6 +11,7 @@ Excepciones: `.trivyignore` con CVE, motivo, responsable y fecha de revision.
 | SEC-02 | Revision previa a ZAP (reglas 10021, 10020, 10038, 10049) | Baja | Sin `X-Content-Type-Options`, `X-Frame-Options`, CSP ni `Cache-Control` | `curl -D -` sin cabeceras | Corregir | Alexander | Corregido (DEF-03) |
 | SEC-03 | Revision manual | Baja | Errores de parametros exponian nombres de metodos Java (`list.size`) | cuerpo 400 | Corregir | Alexander | Corregido |
 | SEC-04 | Semgrep local (`p/java`, `p/owasp-top-ten`, `p/secrets`) | - | Sin hallazgos de severidad ERROR | ejecucion 2026-11-24 | - | Alexander | OK |
+| SEC-08 | Trivy fs (gate SCA del PR #1) | Alta | 5 CVE HIGH: pgjdbc 42.7.5 (CVE-2025-49146, CVE-2026-42198, CVE-2026-54291) y Spring Boot Actuator 3.4.5 (CVE-2026-22731, CVE-2026-22733, bypass de autenticacion) | job `sca` fallido | Corregir: Spring Boot 3.5.16, pgjdbc 42.7.15, springdoc 2.8.17; 69 pruebas en verde | Alexander | Corregido |
 | SEC-05 | Diseno | Media | Rate limit en memoria por instancia; sin limite para peticiones no autenticadas | ADR-0003 | Aceptar en laboratorio; en produccion limite por IP en gateway + Redis | Equipo | Aceptado |
 | SEC-06 | Diseno | Media | API keys estaticas (sin rotacion ni expiracion) | `application.yml` usa variables de entorno; valores dev solo locales | Aceptar en laboratorio; produccion OIDC/JWT | Equipo | Aceptado |
 | SEC-07 | Compose local | Baja | Grafana con acceso anonimo (Viewer) y RabbitMQ guest/guest | `docker-compose.yml` | Aceptar: solo laboratorio local, nunca staging | Equipo | Aceptado |
