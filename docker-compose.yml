@@ -30,6 +30,10 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:-inventory}
       RABBIT_HOST: rabbitmq
       RATE_LIMIT_STRATEGY: ${RATE_LIMIT_STRATEGY:-token-bucket}
+      # Solo para la prueba de carga (perf/README.md) se elevan; por defecto = application.yml
+      APP_RATELIMIT_CAPACITY: ${RATE_LIMIT_CAPACITY:-20}
+      APP_RATELIMIT_REFILLPERSECOND: ${RATE_LIMIT_REFILL:-10}
+      APP_RATELIMIT_LIMIT: ${RATE_LIMIT_LIMIT:-20}
     ports: ["8080:8080"]
 
   prometheus:
