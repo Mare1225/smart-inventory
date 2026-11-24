@@ -36,16 +36,27 @@ jobs:
             target/surefire-reports
             target/failsafe-reports
 
-  sast:                               # Gate 3a: analisis estatico
+  contracts:                          # Gate 2b: el contrato se valida antes que el codigo
     runs-on: ubuntu-latest
-    permissions: { contents: read, security-events: write }
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with: { distribution: temurin, java-version: '21', cache: maven }
-      - uses: github/codeql-action/init@v3
-        with: { languages: java-kotlin, build-mode: none }
-      - uses: github/codeql-action/analyze@v3
+      - name: Lint OpenAPI (Spectral, falla con warnings)
+        run: docker run --rm -v "$PWD:/w" -w /w stoplight/spectral:6.13.1 lint openapi/openapi.yaml --fail-severity=warn
+      - name: Validar AsyncAPI y JSON Schemas referenciados
+        run: docker run --rm -v "$PWD/contracts:/c" -w /c asyncapi/cli:2.14.1 validate asyncapi.yaml
+
+  sast:                               # Gate 3a: analisis estatico (Semgrep: funciona en repos privados sin GHAS)
+    runs-on: ubuntu-latest
+    container: { image: semgrep/semgrep:1.95.0 }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Semgrep (reglas Java, OWASP Top 10 y secretos; bloquea severidad ERROR)
+        run: |
+          semgrep scan --config p/java --config p/owasp-top-ten --config p/secrets \
+            --severity ERROR --error --sarif --output semgrep.sarif --metrics off
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: sast-semgrep, path: semgrep.sarif }
 
   sca:                                # Gate 3b: dependencias vulnerables (falla con HIGH/CRITICAL)
     runs-on: ubuntu-latest
@@ -61,7 +72,7 @@ jobs:
           # Excepciones aceptadas con justificacion: .trivyignore (CVE, motivo, responsable, fecha)
 
   package:                            # Gate 4: imagen inmutable, SBOM y escaneo de imagen
-    needs: [secrets-scan, build-test, sast, sca]
+    needs: [secrets-scan, build-test, contracts, sast, sca]
     runs-on: ubuntu-latest
     permissions: { contents: read, packages: write }
     outputs:
