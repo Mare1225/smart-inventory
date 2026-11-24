@@ -26,7 +26,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 /** 429 de punta a punta en el filtro: rafaga de 3, recarga despreciable, cuota independiente por cliente. */
 @WebMvcTest(properties = {"app.rate-limit.capacity=3", "app.rate-limit.refill-per-second=0.001"})
-@Import({AppConfig.class, ProblemWriter.class, WebLayerTest.Metrics.class})
+@Import({AppConfig.class, ProblemWriter.class, WebSliceTestConfig.class})
 class RateLimitFilterTest {
 
     @Autowired MockMvc mvc;

@@ -24,19 +24,13 @@ import ec.usfq.smartinventory.application.InventoryQueryService;
 import ec.usfq.smartinventory.application.ReplenishmentService;
 import ec.usfq.smartinventory.application.ReservationService;
 import ec.usfq.smartinventory.config.AppConfig;
-import ec.usfq.smartinventory.config.SecurityProperties;
 import ec.usfq.smartinventory.domain.InsufficientStockException;
-import io.micrometer.core.instrument.MeterRegistry;
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.boot.context.properties.EnableConfigurationProperties;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -48,18 +42,8 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
  * formato problem+json que ve quien integra. Los casos de uso son dobles (Mockito).
  */
 @WebMvcTest(properties = {"app.rate-limit.capacity=1000", "app.rate-limit.refill-per-second=1000"})
-@Import({AppConfig.class, ProblemWriter.class, WebLayerTest.Metrics.class})
+@Import({AppConfig.class, ProblemWriter.class, WebSliceTestConfig.class})
 class WebLayerTest {
-
-    /** El slice web no ejecuta @ConfigurationPropertiesScan: se registran aqui las propiedades que usan los filtros. */
-    @TestConfiguration
-    @EnableConfigurationProperties({SecurityProperties.class, AppConfig.RateLimitProperties.class})
-    static class Metrics {
-        @Bean
-        MeterRegistry meterRegistry() {
-            return new SimpleMeterRegistry();
-        }
-    }
 
     static final String OPS = "dev-ops-key";
     static final String FULFILLMENT = "dev-fulfillment-key";
