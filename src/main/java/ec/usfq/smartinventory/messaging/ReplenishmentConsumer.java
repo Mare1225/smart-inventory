@@ -3,6 +3,7 @@ package ec.usfq.smartinventory.messaging;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import ec.usfq.smartinventory.config.RabbitConfig;
 import ec.usfq.smartinventory.domain.ReplenishmentRule;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
@@ -31,15 +32,17 @@ public class ReplenishmentConsumer {
     private final ReplenishmentRule rule;
     private final OutboxWriter outbox;
     private final Clock clock;
+    private final MeterRegistry metrics;
 
     public ReplenishmentConsumer(ObjectMapper mapper, JdbcTemplate jdbc, ProcessedEvents processed,
-                                 ReplenishmentRule rule, OutboxWriter outbox, Clock clock) {
+                                 ReplenishmentRule rule, OutboxWriter outbox, Clock clock, MeterRegistry metrics) {
         this.mapper = mapper;
         this.jdbc = jdbc;
         this.processed = processed;
         this.rule = rule;
         this.outbox = outbox;
         this.clock = clock;
+        this.metrics = metrics;
     }
 
     @RabbitListener(queues = RabbitConfig.REPLENISHMENT_Q)
@@ -50,8 +53,10 @@ public class ReplenishmentConsumer {
         try {
             if (!processed.firstTime(NAME, e.eventId())) {
                 log.info("duplicate event {} ignored", e.eventId());
+                metrics.counter("smartinventory.events.duplicates", "consumer", NAME).increment();
                 return;
             }
+            EventLag.record(metrics, NAME, e, clock);
             String sku = (String) e.payload().get("sku");
             var cfg = jdbc.queryForList(
                     "select reorder_point, target_level, supplier from reorder_config where sku = ?", sku);

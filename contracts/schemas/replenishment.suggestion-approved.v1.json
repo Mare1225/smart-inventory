@@ -1,0 +1,77 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://smartinventory.usfq.edu.ec/events/replenishment.suggestion-approved/v1",
+  "title": "replenishment.suggestion-approved v1",
+  "description": "Emisor: ReplenishmentService.approve (via Outbox, misma transaccion que la transicion OPEN -> APPROVED). Routing key replenishment.suggestion-approved. Consumidor previsto: Compras/ERP para emitir la orden (fuera del alcance).",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "eventId",
+    "eventType",
+    "schemaVersion",
+    "occurredAt",
+    "correlationId",
+    "producer",
+    "payload"
+  ],
+  "properties": {
+    "eventId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "eventType": {
+      "const": "replenishment.suggestion-approved"
+    },
+    "schemaVersion": {
+      "const": 1
+    },
+    "occurredAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "correlationId": {
+      "type": "string"
+    },
+    "producer": {
+      "const": "smart-inventory"
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "suggestionId",
+        "sku",
+        "approvedBy"
+      ],
+      "properties": {
+        "suggestionId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "sku": {
+          "type": "string"
+        },
+        "approvedBy": {
+          "type": "string",
+          "description": "Cliente autenticado que aprobo (no datos personales)"
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "eventId": "7d7f1c55-5c42-4a8e-a0de-5a2a3e1b9f01",
+      "eventType": "replenishment.suggestion-approved",
+      "schemaVersion": 1,
+      "occurredAt": "2026-11-24T19:21:03.120Z",
+      "correlationId": "6019dac3-a1e2-42fb-95e8-98345b71f9d8",
+      "producer": "smart-inventory",
+      "payload": {
+        "suggestionId": "0f6a0a4e-8b9b-4d1e-b0e5-61d0f5b7a7c2",
+        "sku": "SKU-2002",
+        "approvedBy": "purchasing"
+      }
+    }
+  ],
+  "x-compatibility": "Igual que inventory.stock-reserved: cambios aditivos compatibles; incompatibles => schemaVersion 2."
+}

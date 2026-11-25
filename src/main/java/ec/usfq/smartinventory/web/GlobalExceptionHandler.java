@@ -10,6 +10,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.ErrorResponse;
+import org.springframework.web.HttpMediaTypeNotAcceptableException;
+import org.springframework.web.HttpMediaTypeNotSupportedException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.jdbc.CannotGetJdbcConnectionException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -17,6 +21,7 @@ import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 /** Un unico lugar que traduce excepciones a problem+json. Nunca expone stack traces ni SQL. */
 @RestControllerAdvice
@@ -46,14 +51,54 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(ConstraintViolationException.class)
     ResponseEntity<Map<String, Object>> invalidParams(ConstraintViolationException ex) {
         var errors = ex.getConstraintViolations().stream()
-                .map(v -> Map.of("field", v.getPropertyPath().toString(), "message", v.getMessage())).toList();
+                .map(v -> Map.of("field", parameterName(v.getPropertyPath().toString()), "message", v.getMessage()))
+                .toList();
         return respond(400, "INVALID_PARAMETER", "Invalid request parameter", errors);
     }
 
-    @ExceptionHandler({HttpMessageNotReadableException.class, MissingRequestHeaderException.class,
-            MethodArgumentTypeMismatchException.class})
+    /** "list.size" -> "size": el nombre del metodo Java es un detalle interno que no se expone al cliente. */
+    static String parameterName(String propertyPath) {
+        int dot = propertyPath.lastIndexOf('.');
+        return dot < 0 ? propertyPath : propertyPath.substring(dot + 1);
+    }
+
+    @ExceptionHandler(MissingRequestHeaderException.class)
+    ResponseEntity<Map<String, Object>> missingHeader(MissingRequestHeaderException ex) {
+        return respond(400, "MISSING_HEADER", "Missing required header " + ex.getHeaderName(),
+                List.of(Map.of("field", ex.getHeaderName(), "message", "is required")));
+    }
+
+    @ExceptionHandler({HttpMessageNotReadableException.class, MethodArgumentTypeMismatchException.class})
     ResponseEntity<Map<String, Object>> malformed(Exception ex) {
-        return respond(400, "MALFORMED_REQUEST", "Malformed request (body, header or parameter type)", null);
+        return respond(400, "MALFORMED_REQUEST", "Malformed request (body or parameter type)", null);
+    }
+
+    /**
+     * Errores del propio framework (ruta inexistente, metodo no permitido, media type no soportado o no aceptable).
+     * Antes caian en el manejador generico y respondian 500 (DEF-02 en docs/evidencias/sat-resultados.md).
+     */
+    @ExceptionHandler({NoResourceFoundException.class, HttpRequestMethodNotSupportedException.class,
+            HttpMediaTypeNotSupportedException.class, HttpMediaTypeNotAcceptableException.class})
+    ResponseEntity<Map<String, Object>> framework(Exception ex) {
+        ErrorResponse er = (ErrorResponse) ex;
+        int status = er.getStatusCode().value();
+        String code = switch (status) {
+            case 404 -> "NOT_FOUND";
+            case 405 -> "METHOD_NOT_ALLOWED";
+            case 406 -> "NOT_ACCEPTABLE";
+            case 415 -> "UNSUPPORTED_MEDIA_TYPE";
+            default -> "BAD_REQUEST";
+        };
+        String detail = switch (status) {
+            case 404 -> "Resource not found";
+            case 405 -> "Method not allowed for this resource";
+            case 406 -> "Requested media type is not available";
+            case 415 -> "Content-Type not supported; use application/json";
+            default -> "Bad request";
+        };
+        return ResponseEntity.status(status).headers(er.getHeaders())
+                .contentType(MediaType.parseMediaType(ProblemWriter.PROBLEM_JSON))
+                .body(problems.body(status, code, detail, null));
     }
 
     @ExceptionHandler(InsufficientStockException.class)

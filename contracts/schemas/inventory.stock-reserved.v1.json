@@ -1,0 +1,117 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://smartinventory.usfq.edu.ec/events/inventory.stock-reserved/v1",
+  "title": "inventory.stock-reserved v1",
+  "description": "Emisor: smart-inventory (via Outbox, en la misma transaccion que la reserva). Exchange smartinventory.events (topic), routing key inventory.stock-reserved. Consumidores: dashboard.q (US-04) y replenishment.q (US-03). Entrega al-menos-una-vez: los consumidores deduplican por eventId.",
+  "type": "object",
+  "required": [
+    "eventId",
+    "eventType",
+    "schemaVersion",
+    "occurredAt",
+    "correlationId",
+    "producer",
+    "payload"
+  ],
+  "properties": {
+    "eventId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "eventType": {
+      "const": "inventory.stock-reserved"
+    },
+    "schemaVersion": {
+      "const": 1
+    },
+    "occurredAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "correlationId": {
+      "type": "string"
+    },
+    "producer": {
+      "const": "smart-inventory"
+    },
+    "payload": {
+      "type": "object",
+      "required": [
+        "reservationId",
+        "sku",
+        "location",
+        "quantity",
+        "destination",
+        "lines"
+      ],
+      "properties": {
+        "reservationId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "sku": {
+          "type": "string"
+        },
+        "location": {
+          "type": "string"
+        },
+        "quantity": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "destination": {
+          "type": "string"
+        },
+        "lines": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "lotCode",
+              "quantity"
+            ],
+            "properties": {
+              "lotCode": {
+                "type": "string"
+              },
+              "quantity": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          }
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "x-compatibility": "Agregar campos opcionales es compatible (los consumidores ignoran campos desconocidos). Quitar/renombrar campos o cambiar su significado => schemaVersion 2 con doble publicacion durante la migracion.",
+  "additionalProperties": true,
+  "examples": [
+    {
+      "eventId": "5b0c3f0e-3f7a-4a51-9a51-0a3a4bfb2c11",
+      "eventType": "inventory.stock-reserved",
+      "schemaVersion": 1,
+      "occurredAt": "2026-11-24T19:21:01.912Z",
+      "correlationId": "8bb77f71-aa25-4e15-bc30-fded45f84d46",
+      "producer": "smart-inventory",
+      "payload": {
+        "reservationId": "63bc74f0-0da1-4288-a72f-e4d64fc5e594",
+        "sku": "SKU-1001",
+        "location": "BOD-UIO",
+        "quantity": 35,
+        "destination": "PEDIDO-SAT",
+        "lines": [
+          {
+            "lotCode": "L-B",
+            "quantity": 30
+          },
+          {
+            "lotCode": "L-A",
+            "quantity": 5
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,154 @@
+asyncapi: 3.0.0
+info:
+  title: Smart Inventory - eventos de dominio
+  version: 1.0.0
+  description: |
+    Contrato asincrono del servicio smart-inventory. Complementa openapi/openapi.yaml.
+
+    - Todos los eventos viajan en el mismo sobre (eventId, eventType, schemaVersion, occurredAt, correlationId,
+      producer, payload). El cuerpo de cada mensaje se valida contra contracts/schemas/<eventType>.v1.json en
+      MessagingFlowIT y EventContractTest.
+    - Publicacion via Outbox (ADR-0001): el evento se guarda en la misma transaccion que el cambio de dominio y se
+      publica con publisher confirms. Entrega al-menos-una-vez y en orden de occurredAt por publicador.
+    - Consumidores idempotentes: registran (consumer, eventId) en processed_event en la misma transaccion que su efecto.
+    - Reintentos del consumidor: 3 intentos, backoff exponencial 1 s -> 2 s (max 10 s). Agotados => DLX inventory.dlx
+      (routing key "dead") => cola inventory.dlq (retencion 7 dias). Re-proceso seguro: docs/runbook.md.
+
+    Versionado: la version de este documento no es la del evento. Cambios aditivos (campo opcional nuevo) mantienen
+    schemaVersion 1. Quitar/renombrar un campo o cambiar su significado crea schemaVersion 2 / eventType nuevo y se
+    publican ambos durante la migracion. Una version publicada nunca se reutiliza con otro significado.
+  contact:
+    name: Equipo Smart Inventory (USFQ - Desarrollo de Software Moderno)
+defaultContentType: application/json
+
+servers:
+  local:
+    host: localhost:5672
+    protocol: amqp
+    protocolVersion: 0.9.1
+    description: RabbitMQ 3.13 de docker-compose (consola :15672, metricas :15692)
+
+channels:
+  stockReserved:
+    address: inventory.stock-reserved
+    title: Reserva confirmada
+    messages:
+      stockReserved: { $ref: '#/components/messages/StockReserved' }
+    bindings:
+      amqp:
+        is: routingKey
+        exchange: { name: smartinventory.events, type: topic, durable: true, autoDelete: false, vhost: / }
+        bindingVersion: 0.3.0
+  suggestionOpened:
+    address: replenishment.suggestion-opened
+    title: Sugerencia de reposicion abierta
+    messages:
+      suggestionOpened: { $ref: '#/components/messages/SuggestionOpened' }
+    bindings:
+      amqp:
+        is: routingKey
+        exchange: { name: smartinventory.events, type: topic, durable: true, autoDelete: false, vhost: / }
+        bindingVersion: 0.3.0
+  suggestionApproved:
+    address: replenishment.suggestion-approved
+    title: Sugerencia aprobada
+    messages:
+      suggestionApproved: { $ref: '#/components/messages/SuggestionApproved' }
+    bindings:
+      amqp:
+        is: routingKey
+        exchange: { name: smartinventory.events, type: topic, durable: true, autoDelete: false, vhost: / }
+        bindingVersion: 0.3.0
+  dashboardQueue:
+    address: dashboard.q
+    title: Cola del consumidor del dashboard (US-04)
+    description: Enlazada a smartinventory.events con routing key inventory.stock-reserved. DLX inventory.dlx.
+    messages:
+      stockReserved: { $ref: '#/components/messages/StockReserved' }
+    bindings:
+      amqp:
+        is: queue
+        queue: { name: dashboard.q, durable: true, exclusive: false, autoDelete: false, vhost: / }
+        bindingVersion: 0.3.0
+  replenishmentQueue:
+    address: replenishment.q
+    title: Cola del consumidor de reposicion (US-03)
+    description: Enlazada a smartinventory.events con routing key inventory.stock-reserved. DLX inventory.dlx.
+    messages:
+      stockReserved: { $ref: '#/components/messages/StockReserved' }
+    bindings:
+      amqp:
+        is: queue
+        queue: { name: replenishment.q, durable: true, exclusive: false, autoDelete: false, vhost: / }
+        bindingVersion: 0.3.0
+  deadLetterQueue:
+    address: inventory.dlq
+    title: Mensajes que agotaron reintentos
+    description: |
+      Recibe desde inventory.dlx (direct, routing key "dead") lo que dashboard.q o replenishment.q rechazan tras
+      3 intentos (JSON invalido, error persistente). x-message-ttl 7 dias. Alerta DeadLetterQueueNotEmpty.
+      Nunca purgar como primer paso: inspeccionar, corregir y re-publicar (consumidores idempotentes).
+    messages:
+      stockReserved: { $ref: '#/components/messages/StockReserved' }
+    bindings:
+      amqp:
+        is: queue
+        queue: { name: inventory.dlq, durable: true, exclusive: false, autoDelete: false, vhost: / }
+        bindingVersion: 0.3.0
+
+operations:
+  publishStockReserved:
+    action: send
+    channel: { $ref: '#/channels/stockReserved' }
+    summary: ReservationService (US-02) via OutboxPublisher, con publisher confirms por lote.
+    bindings:
+      amqp: { deliveryMode: 2, mandatory: false, bindingVersion: 0.3.0 }
+  publishSuggestionOpened:
+    action: send
+    channel: { $ref: '#/channels/suggestionOpened' }
+    summary: ReplenishmentConsumer al abrir una sugerencia (a lo sumo una OPEN por SKU).
+  publishSuggestionApproved:
+    action: send
+    channel: { $ref: '#/channels/suggestionApproved' }
+    summary: ReplenishmentService.approve en la transicion OPEN -> APPROVED.
+  consumeForDashboard:
+    action: receive
+    channel: { $ref: '#/channels/dashboardQueue' }
+    summary: DashboardConsumer actualiza dashboard_view (lastUpdatedAt, processingDelayMs). Idempotente por eventId.
+    bindings:
+      amqp: { ack: true, bindingVersion: 0.3.0 }
+  consumeForReplenishment:
+    action: receive
+    channel: { $ref: '#/channels/replenishmentQueue' }
+    summary: ReplenishmentConsumer evalua ReorderPointRule. Idempotente por eventId y por indice unico de sugerencia OPEN.
+    bindings:
+      amqp: { ack: true, bindingVersion: 0.3.0 }
+
+components:
+  messages:
+    StockReserved:
+      name: inventory.stock-reserved
+      title: inventory.stock-reserved v1
+      contentType: application/json
+      correlationId: { location: $message.payload#/correlationId }
+      payload:
+        schemaFormat: application/schema+json;version=draft-07
+        schema: { $ref: './schemas/inventory.stock-reserved.v1.json' }
+      bindings:
+        amqp: { contentEncoding: utf-8, messageType: inventory.stock-reserved, bindingVersion: 0.3.0 }
+    SuggestionOpened:
+      name: replenishment.suggestion-opened
+      title: replenishment.suggestion-opened v1
+      contentType: application/json
+      correlationId: { location: $message.payload#/correlationId }
+      payload:
+        schemaFormat: application/schema+json;version=draft-07
+        schema: { $ref: './schemas/replenishment.suggestion-opened.v1.json' }
+    SuggestionApproved:
+      name: replenishment.suggestion-approved
+      title: replenishment.suggestion-approved v1
+      contentType: application/json
+      correlationId: { location: $message.payload#/correlationId }
+      payload:
+        schemaFormat: application/schema+json;version=draft-07
+        schema: { $ref: './schemas/replenishment.suggestion-approved.v1.json' }

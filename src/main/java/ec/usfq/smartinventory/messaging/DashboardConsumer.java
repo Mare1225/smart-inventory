@@ -1,10 +1,12 @@
 package ec.usfq.smartinventory.messaging;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micrometer.core.instrument.MeterRegistry;
 import ec.usfq.smartinventory.config.RabbitConfig;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.sql.Timestamp;
+import java.time.Clock;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,11 +27,16 @@ public class DashboardConsumer {
     private final ObjectMapper mapper;
     private final JdbcTemplate jdbc;
     private final ProcessedEvents processed;
+    private final MeterRegistry metrics;
+    private final Clock clock;
 
-    public DashboardConsumer(ObjectMapper mapper, JdbcTemplate jdbc, ProcessedEvents processed) {
+    public DashboardConsumer(ObjectMapper mapper, JdbcTemplate jdbc, ProcessedEvents processed,
+                             MeterRegistry metrics, Clock clock) {
         this.mapper = mapper;
         this.jdbc = jdbc;
         this.processed = processed;
+        this.metrics = metrics;
+        this.clock = clock;
     }
 
     @RabbitListener(queues = RabbitConfig.DASHBOARD_Q)
@@ -40,6 +47,7 @@ public class DashboardConsumer {
         try {
             if (!processed.firstTime(NAME, e.eventId())) {
                 log.info("duplicate event {} ignored", e.eventId());
+                metrics.counter("smartinventory.events.duplicates", "consumer", NAME).increment();
                 return;
             }
             String sku = (String) e.payload().get("sku");
@@ -55,6 +63,7 @@ public class DashboardConsumer {
                         last_event_at       = excluded.last_event_at,
                         last_updated_at     = now()""",
                     sku, reservationId, Timestamp.from(e.occurredAt()));
+            EventLag.record(metrics, NAME, e, clock);
             log.info("dashboard updated for sku {}", sku);
         } finally {
             MDC.remove("requestId");
